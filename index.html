@@ -8,118 +8,129 @@
   <title>ドローン練習ノート 共有ページ</title>
   <style>
     :root{color-scheme:light;font-family:-apple-system,BlinkMacSystemFont,"Hiragino Sans",sans-serif;color:#17233d;background:#f5f7fb}
+    *{box-sizing:border-box}
     body{margin:0}
     .loading{font-family:sans-serif;text-align:center;padding:64px 16px;color:#62708a}
+    .top{padding:16px 20px;background:#15284b;color:white;font-weight:700}
+    .readonly{padding:11px 20px;background:#e7f2ff;color:#185a9d;font-size:13px}
+    .shell{width:min(760px,100%);margin:auto;padding:24px 16px 48px}
+    .hero{margin-bottom:18px}.hero h1{font-size:24px;margin:0 0 8px}
+    .hero p,.card p{color:#62708a;font-size:13px;line-height:1.6}
+    .grid,.skills{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+    .card{background:white;border:1px solid #dde4ee;border-radius:14px;padding:16px;margin-bottom:12px}
+    .metric b{display:block;font-size:26px;color:#145da0}
+    .skill{display:flex;justify-content:space-between;gap:12px;padding:8px 0;border-bottom:1px solid #edf0f5;font-size:13px}
+    .skill:last-child{border:0}.skill b{color:#145da0}
+    .head{display:flex;align-items:center;gap:10px}
+    .badge{padding:3px 8px;border-radius:99px;background:#e7f2ff;color:#145da0;font-size:12px}
+    .fpv .badge{background:#f1eaff;color:#6f42c1}
+    h2{font-size:18px;margin:28px 0 12px}
+    .footer{text-align:center;color:#8590a5;font-size:12px;margin-top:30px}
+    /* メッセージフォーム */
+    .msg label{display:block;font-size:13px;font-weight:600;margin:12px 0 4px}
+    .msg input,.msg select,.msg textarea{width:100%;padding:10px 12px;border:1px solid #cdd6e4;border-radius:10px;font-size:15px;font-family:inherit;background:#fff}
+    .msg textarea{min-height:96px;resize:vertical}
+    .msg .hp{position:absolute;left:-9999px;width:1px;height:1px;overflow:hidden}
+    .msg button{margin-top:16px;width:100%;padding:13px;border:0;border-radius:10px;background:#145da0;color:#fff;font-size:16px;font-weight:700}
+    .msg button:disabled{opacity:.55}
+    .msg .note{color:#62708a;font-size:13px;line-height:1.6;margin:0 0 6px}
+    .msg .status{margin-top:12px;font-size:14px;text-align:center}
+    .msg .status.err{color:#c0392b}.msg .status.ok{color:#1e9e57}
+    @media(max-width:560px){.grid,.skills{grid-template-columns:1fr}.shell{padding-top:18px}}
   </style>
 </head>
 <body>
-  <main class="loading">読み込み中…</main>
+  <div id="app" class="loading">読み込み中…</div>
   <script>
-    // ============================================================
-    // ドローン練習ノート 共有ページ（GitHub Pages 静的ホスティング版）
-    // データ・認証・アクセス制御は Supabase 側（RLS + SECURITY DEFINER
-    // 関数 get_shared_page）で守る。ここに置く publishable キーは公開前提。
-    // 無効/期限切れ/停止済みトークンは RPC が null を返す → 「見つかりません」。
-    // ============================================================
+    // 共有ページ（GitHub Pages 静的ホスティング）。
+    // 閲覧: Supabase get_shared_page RPC を直接呼ぶ。
+    // メッセージ送信: Edge Function post-message 経由（ボット除け＋IP制限）。
     var SUPABASE_URL = 'https://kvffbiqtnotfyficvonv.supabase.co';
     var PUBLISHABLE_KEY = 'sb_publishable_vT_yhC6Fe1PlZyz1nmC0ww_w1ymIW54';
+    var POST_MESSAGE_URL = SUPABASE_URL + '/functions/v1/post-message';
+    var PAGE_LOADED_AT = Date.now();
 
     var TOKEN_PATTERN = /^[A-Za-z0-9_-]{43}$/;
-    var normalSkills = {
-      safety_check: '安全確認', takeoff: '離陸', landing: '着陸', hovering: 'ホバリング',
-      front_back_left_right: '前後左右移動', turning: '旋回', square_flight: '四角飛行',
-      figure_eight: '8の字飛行', camera_control: 'カメラ操作', aerial_shooting: '空撮基礎',
-      emergency_response: '緊急時対応'
-    };
-    var fpvSkills = {
-      fpv_preparation: 'FPV準備', goggle_view: 'ゴーグル視点', arm_disarm: 'アーム・ディスアーム',
-      throttle_control: 'スロットル操作', angle_mode: 'Angleモード', low_speed_flight: '低速飛行',
-      straight_flight: '直線飛行', turning: '旋回', gate: 'ゲート通過', marker_turn: 'マーカー周回',
-      figure_eight: 'FPV 8の字', indoor_course: '屋内コース', crash_response: '墜落後対応', acro_basic: 'Acro基礎'
-    };
-    var stages = { none: '未経験', practicing: '練習中', done: 'できた', stable: '安定してできる' };
-    var ratings = { hard: 'まだ難しい', slightly: '少しできた', mostly: 'だいたいできた', stable: '安定してできた' };
+    var normalSkills = {safety_check:'安全確認',takeoff:'離陸',landing:'着陸',hovering:'ホバリング',front_back_left_right:'前後左右移動',turning:'旋回',square_flight:'四角飛行',figure_eight:'8の字飛行',camera_control:'カメラ操作',aerial_shooting:'空撮基礎',emergency_response:'緊急時対応'};
+    var fpvSkills = {fpv_preparation:'FPV準備',goggle_view:'ゴーグル視点',arm_disarm:'アーム・ディスアーム',throttle_control:'スロットル操作',angle_mode:'Angleモード',low_speed_flight:'低速飛行',straight_flight:'直線飛行',turning:'旋回',gate:'ゲート通過',marker_turn:'マーカー周回',figure_eight:'FPV 8の字',indoor_course:'屋内コース',crash_response:'墜落後対応',acro_basic:'Acro基礎'};
+    var stages = {none:'未経験',practicing:'練習中',done:'できた',stable:'安定してできる'};
+    var ratings = {hard:'まだ難しい',slightly:'少しできた',mostly:'だいたいできた',stable:'安定してできた'};
 
-    function escapeHtml(value) {
-      return String(value == null ? '' : value).replace(/[&<>"']/g, function (char) {
-        return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char];
+    function esc(v){return String(v==null?'':v).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];});}
+    function tokenFromUrl(v){var t=new URL(v).searchParams.get('token')||'';return TOKEN_PATTERN.test(t)?t:null;}
+    function fdate(v){if(!v)return '—';var d=new Date(v+'T00:00:00Z');return isNaN(d.valueOf())?'—':(d.getUTCMonth()+1)+'月'+d.getUTCDate()+'日';}
+    function dur(v){var t=Math.max(0,Number(v)||0),h=Math.floor(t/60),m=t%60;return h?(h+'時間'+(m?m+'分':'')):(m+'分');}
+    function skillRows(s,labels){return Object.keys(labels).map(function(k){return '<div class="skill"><span>'+esc(labels[k])+'</span><b>'+esc((s&&stages[s[k]])||'未着手')+'</b></div>';}).join('');}
+    function logCards(logs){return logs.map(function(l){var fpv=l.lesson_type==='fpv';var d=[l.aircraft?'✈ '+l.aircraft:'',l.place?'📍 '+l.place:'',l.self_rating?(ratings[l.self_rating]||l.self_rating):'',l.crash_count!==undefined?'墜落 '+l.crash_count+'回':'',l.has_damage!==undefined?(l.has_damage?'破損あり':'破損なし'):''].filter(Boolean).map(esc).join(' 　');return '<section class="card log '+(fpv?'fpv':'')+'"><div class="head"><b>'+fdate(l.lesson_date)+'</b><span class="badge">'+(fpv?'FPV':'通常')+'</span><span>'+esc(l.duration_minutes)+'分</span></div><p>'+(d||'詳細なし')+'</p>'+(l.next_task?'<p>次回: '+esc(l.next_task)+'</p>':'')+(l.repair_memo?'<p>修理メモ: '+esc(l.repair_memo)+'</p>':'')+'</section>';}).join('');}
+
+    function messageForm(){
+      return '<h2>メッセージを送る</h2><section class="card msg">'+
+        '<p class="note">この進捗について、アドバイスや確認事項を送ることができます。進捗データを編集することはできません。</p>'+
+        '<form id="mform">'+
+        '<label>お名前</label><input id="m_name" maxlength="50" autocomplete="off" required>'+
+        '<label>立場</label><select id="m_role" required><option value="teacher">先生</option><option value="parent">保護者</option><option value="school">スクール</option><option value="friend">友人</option><option value="other">その他</option></select>'+
+        '<label>メッセージ本文</label><textarea id="m_msg" maxlength="2000" required></textarea>'+
+        '<div class="hp"><label>Website</label><input id="m_hp" tabindex="-1" autocomplete="off"></div>'+
+        '<button id="m_btn" type="submit">送信する</button>'+
+        '<div id="m_status" class="status"></div>'+
+        '</form></section>';
+    }
+
+    function renderInner(data){
+      var p=(data&&data.profile)||{},s=(data&&data.summary)||{},logs=(data&&Array.isArray(data.lesson_logs))?data.lesson_logs:[];
+      var title=(data&&data.title)||((p.display_name||'ユーザー')+'さんの練習進捗');
+      var meta=[p.purpose?'目的: '+p.purpose:'',s.last_lesson_date?'最終練習: '+fdate(s.last_lesson_date):''].filter(Boolean).join(' 　');
+      var levels=(p.normal_level!=null?'<section class="card metric"><small>通常ドローン 現在レベル</small><b>Lv.'+esc(p.normal_level)+'</b></section>':'')+(p.fpv_level!=null?'<section class="card metric"><small>FPVドローン 現在レベル</small><b>Lv.'+esc(p.fpv_level)+'</b></section>':'');
+      var skills=(data&&data.normal_skills?'<section class="card"><h3>通常ドローン</h3>'+skillRows(data.normal_skills,normalSkills)+'</section>':'')+(data&&data.fpv_skills?'<section class="card"><h3>FPVドローン</h3>'+skillRows(data.fpv_skills,fpvSkills)+'</section>':'');
+      var lessons=(data&&data.share_scope==='skills_only')?'':('<h2>最近の練習</h2>'+(logs.length?logCards(logs):'<section class="card">この期間の練習記録はありません</section>'));
+      var form=(data&&data.allow_messages)?messageForm():'';
+      return '<header class="top">✈ ドローン練習ノート</header>'+
+        '<div class="readonly">👁 このページは閲覧専用です。練習記録やスキル評価を編集することはできません。</div>'+
+        '<main class="shell"><section class="hero"><h1>'+esc(title)+'</h1>'+(meta?'<p>'+esc(meta)+'</p>':'')+'</section>'+
+        '<div class="grid">'+levels+'<section class="card metric"><small>総練習回数</small><b>'+esc(s.total_lessons!=null?s.total_lessons:0)+'回</b></section><section class="card metric"><small>総練習時間</small><b>'+esc(dur(s.total_duration_minutes))+'</b></section></div>'+
+        (skills?'<h2>スキル進捗</h2><div class="skills">'+skills+'</div>':'')+lessons+form+
+        '<div class="footer">ドローン練習ノートで記録されています</div></main>';
+    }
+
+    function notFound(){
+      document.getElementById('app').className='';
+      document.getElementById('app').innerHTML='<main style="font-family:sans-serif;text-align:center;padding:64px 16px;color:#17233d"><h1>ページが見つかりません</h1><p style="color:#62708a">このリンクは無効か、期限切れ、または共有が停止されています。</p></main>';
+    }
+
+    function wireForm(token){
+      var form=document.getElementById('mform');
+      if(!form)return;
+      form.addEventListener('submit',function(ev){
+        ev.preventDefault();
+        var btn=document.getElementById('m_btn'),status=document.getElementById('m_status');
+        var name=document.getElementById('m_name').value.trim();
+        var role=document.getElementById('m_role').value;
+        var msg=document.getElementById('m_msg').value.trim();
+        var hp=document.getElementById('m_hp').value;
+        status.className='status';status.textContent='';
+        if(!name||!msg){status.className='status err';status.textContent='お名前とメッセージを入力してください。';return;}
+        btn.disabled=true;btn.textContent='送信中…';
+        fetch(POST_MESSAGE_URL,{method:'POST',headers:{'apikey':PUBLISHABLE_KEY,'content-type':'application/json'},
+          body:JSON.stringify({token:token,name:name,role:role,message:msg,website:hp,elapsed:Date.now()-PAGE_LOADED_AT})
+        }).then(function(r){return r.json().then(function(j){return {s:r.status,j:j};});})
+        .then(function(res){
+          if(res.j&&res.j.ok){form.innerHTML='<p class="status ok">送信しました。ありがとうございました。</p>';return;}
+          btn.disabled=false;btn.textContent='送信する';status.className='status err';
+          status.textContent=res.s===429?'短時間に送りすぎです。しばらくしてからお試しください。':'メッセージを送信できませんでした。';
+        }).catch(function(){btn.disabled=false;btn.textContent='送信する';status.className='status err';status.textContent='通信に失敗しました。時間をおいてお試しください。';});
       });
     }
-    function tokenFromUrl(value) {
-      var token = new URL(value).searchParams.get('token') || '';
-      return TOKEN_PATTERN.test(token) ? token : null;
-    }
-    function date(value) {
-      if (!value) return '—';
-      var parsed = new Date(value + 'T00:00:00Z');
-      return isNaN(parsed.valueOf()) ? '—' : (parsed.getUTCMonth() + 1) + '月' + parsed.getUTCDate() + '日';
-    }
-    function duration(value) {
-      var total = Math.max(0, Number(value) || 0);
-      var hours = Math.floor(total / 60);
-      var minutes = total % 60;
-      return hours ? (hours + '時間' + (minutes ? minutes + '分' : '')) : (minutes + '分');
-    }
-    function skillRows(skills, labels) {
-      return Object.keys(labels).map(function (key) {
-        return '<div class="skill"><span>' + escapeHtml(labels[key]) + '</span><b>' +
-          escapeHtml((skills && stages[skills[key]]) || '未着手') + '</b></div>';
-      }).join('');
-    }
-    function logCards(logs) {
-      return logs.map(function (log) {
-        var fpv = log.lesson_type === 'fpv';
-        var details = [
-          log.aircraft ? '✈ ' + log.aircraft : '', log.place ? '📍 ' + log.place : '',
-          log.self_rating ? (ratings[log.self_rating] || log.self_rating) : '',
-          log.crash_count !== undefined ? '墜落 ' + log.crash_count + '回' : '',
-          log.has_damage !== undefined ? (log.has_damage ? '破損あり' : '破損なし') : ''
-        ].filter(Boolean).map(escapeHtml).join(' 　');
-        return '<section class="card log ' + (fpv ? 'fpv' : '') + '"><div class="head"><b>' +
-          date(log.lesson_date) + '</b><span class="badge">' + (fpv ? 'FPV' : '通常') + '</span><span>' +
-          escapeHtml(log.duration_minutes) + '分</span></div><p>' + (details || '詳細なし') + '</p>' +
-          (log.next_task ? '<p>次回: ' + escapeHtml(log.next_task) + '</p>' : '') +
-          (log.repair_memo ? '<p>修理メモ: ' + escapeHtml(log.repair_memo) + '</p>' : '') + '</section>';
-      }).join('');
-    }
-    var style = ':root{color-scheme:light;font-family:-apple-system,BlinkMacSystemFont,"Hiragino Sans",sans-serif;color:#17233d;background:#f5f7fb}*{box-sizing:border-box}body{margin:0}.top{padding:16px 20px;background:#15284b;color:white;font-weight:700}.readonly{padding:11px 20px;background:#e7f2ff;color:#185a9d;font-size:13px}.shell{width:min(760px,100%);margin:auto;padding:24px 16px 48px}.hero{margin-bottom:18px}.hero h1{font-size:24px;margin:0 0 8px}.hero p,.card p{color:#62708a;font-size:13px;line-height:1.6}.grid,.skills{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}.card{background:white;border:1px solid #dde4ee;border-radius:14px;padding:16px;margin-bottom:12px}.metric b{display:block;font-size:26px;color:#145da0}.skill{display:flex;justify-content:space-between;gap:12px;padding:8px 0;border-bottom:1px solid #edf0f5;font-size:13px}.skill:last-child{border:0}.skill b{color:#145da0}.head{display:flex;align-items:center;gap:10px}.badge{padding:3px 8px;border-radius:99px;background:#e7f2ff;color:#145da0;font-size:12px}.fpv .badge{background:#f1eaff;color:#6f42c1}h2{font-size:18px;margin:28px 0 12px}.footer{text-align:center;color:#8590a5;font-size:12px;margin-top:30px}@media(max-width:560px){.grid,.skills{grid-template-columns:1fr}.shell{padding-top:18px}}';
 
-    function renderDocument(data) {
-      var profile = (data && data.profile) || {};
-      var summary = (data && data.summary) || {};
-      var logs = (data && Array.isArray(data.lesson_logs)) ? data.lesson_logs : [];
-      var title = (data && data.title) || ((profile.display_name || 'ユーザー') + 'さんの練習進捗');
-      var meta = [profile.purpose ? '目的: ' + profile.purpose : '', summary.last_lesson_date ? '最終練習: ' + date(summary.last_lesson_date) : ''].filter(Boolean).join(' 　');
-      var levels = (profile.normal_level != null ? '<section class="card metric"><small>通常ドローン 現在レベル</small><b>Lv.' + escapeHtml(profile.normal_level) + '</b></section>' : '') +
-        (profile.fpv_level != null ? '<section class="card metric"><small>FPVドローン 現在レベル</small><b>Lv.' + escapeHtml(profile.fpv_level) + '</b></section>' : '');
-      var skills = (data && data.normal_skills ? '<section class="card"><h3>通常ドローン</h3>' + skillRows(data.normal_skills, normalSkills) + '</section>' : '') +
-        (data && data.fpv_skills ? '<section class="card"><h3>FPVドローン</h3>' + skillRows(data.fpv_skills, fpvSkills) + '</section>' : '');
-      var lessons = (data && data.share_scope === 'skills_only') ? '' : ('<h2>最近の練習</h2>' + (logs.length ? logCards(logs) : '<section class="card">この期間の練習記録はありません</section>'));
-      return '<!doctype html><html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta name="robots" content="noindex,nofollow,noarchive"><meta name="referrer" content="no-referrer"><title>' + escapeHtml(title) + ' | ドローン練習ノート</title><style>' + style + '</style></head><body><header class="top">✈ ドローン練習ノート</header><div class="readonly">👁 このページは閲覧専用です。練習記録やスキル評価を編集することはできません。</div><main class="shell"><section class="hero"><h1>' + escapeHtml(title) + '</h1>' + (meta ? '<p>' + escapeHtml(meta) + '</p>' : '') + '</section><div class="grid">' + levels + '<section class="card metric"><small>総練習回数</small><b>' + escapeHtml((summary.total_lessons != null ? summary.total_lessons : 0)) + '回</b></section><section class="card metric"><small>総練習時間</small><b>' + escapeHtml(duration(summary.total_duration_minutes)) + '</b></section></div>' + (skills ? '<h2>スキル進捗</h2><div class="skills">' + skills + '</div>' : '') + lessons + '<div class="footer">ドローン練習ノートで記録されています</div></main></body></html>';
-    }
-    function renderNotFound() {
-      return '<!doctype html><html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex,nofollow"><title>ページが見つかりません</title></head><body><main style="font-family:sans-serif;text-align:center;padding:64px 16px;color:#17233d"><h1>ページが見つかりません</h1><p style="color:#62708a">このリンクは無効か、期限切れ、または共有が停止されています。</p></main></body></html>';
-    }
-    function show(html) { document.open(); document.write(html); document.close(); }
-
-    (function () {
-      var token = tokenFromUrl(window.location.href);
-      if (!token) { show(renderNotFound()); return; }
-      fetch(SUPABASE_URL + '/rest/v1/rpc/get_shared_page', {
-        method: 'POST',
-        headers: {
-          apikey: PUBLISHABLE_KEY,
-          authorization: 'Bearer ' + PUBLISHABLE_KEY,
-          'content-type': 'application/json'
-        },
-        body: JSON.stringify({ p_token: token })
-      }).then(function (res) {
-        if (!res.ok) throw new Error('rpc');
-        return res.json();
-      }).then(function (data) {
-        if (!data || typeof data !== 'object') { show(renderNotFound()); return; }
-        show(renderDocument(data));
-      }).catch(function () { show(renderNotFound()); });
+    (function(){
+      var token=tokenFromUrl(window.location.href);
+      if(!token){notFound();return;}
+      fetch(SUPABASE_URL+'/rest/v1/rpc/get_shared_page',{method:'POST',headers:{apikey:PUBLISHABLE_KEY,authorization:'Bearer '+PUBLISHABLE_KEY,'content-type':'application/json'},body:JSON.stringify({p_token:token})})
+        .then(function(r){if(!r.ok)throw new Error('rpc');return r.json();})
+        .then(function(data){
+          if(!data||typeof data!=='object'){notFound();return;}
+          var app=document.getElementById('app');app.className='';app.innerHTML=renderInner(data);
+          wireForm(token);
+        }).catch(function(){notFound();});
     })();
   </script>
 </body>
